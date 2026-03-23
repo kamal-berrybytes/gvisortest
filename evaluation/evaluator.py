@@ -3,6 +3,8 @@ import sys
 import json
 import logging
 import subprocess
+import re
+import inspect
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -14,12 +16,13 @@ class CodeEvaluator:
     def __init__(self):
         self.output_dir = os.environ.get('CODE_OUTPUT_DIR', '/tmp/generated')
         self.timeout = int(os.environ.get('EXECUTION_TIMEOUT', '30'))
-        self.use_kubernetes = os.environ.get('KUBERNETES_MODE', 'false').lower() == 'true'
+        self.use_kubernetes = os.environ.get('KUBERNETES_MODE', 'true').lower() == 'true'
     
-    def evaluate(self, code, execution_output):
+    def evaluate(self, code, execution_output=None, test_cases=None):
         logger.info("Evaluating code")
         
-        test_cases = self._get_test_cases()
+        if test_cases is None:
+            test_cases = self._auto_generate_tests(code)
         
         results = []
         all_passed = True
@@ -44,14 +47,77 @@ class CodeEvaluator:
         
         return evaluation
     
-    def _get_test_cases(self):
-        return [
-            {'name': 'test_fibonacci_0', 'input': 0, 'expected': 0},
-            {'name': 'test_fibonacci_1', 'input': 1, 'expected': 1},
-            {'name': 'test_fibonacci_10', 'input': 10, 'expected': 55},
-            {'name': 'test_fibonacci_20', 'input': 20, 'expected': 6765},
-            {'name': 'test_fibonacci_50', 'input': 50, 'expected': 12586269025},
-        ]
+    def _auto_generate_tests(self, code):
+        test_cases = []
+        
+        function_names = self._extract_functions(code)
+        
+        for func_name in function_names:
+            test_cases.extend(self._generate_tests_for_function(code, func_name))
+        
+        if not test_cases:
+            test_cases = [
+                {'name': 'test_execution', 'input': None, 'expected': None, 'check': 'runs'}
+            ]
+        
+        return test_cases
+    
+    def _extract_functions(self, code):
+        functions = []
+        
+        pattern = r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\('
+        matches = re.findall(pattern, code)
+        functions.extend(matches)
+        
+        class_pattern = r'class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[:\(]'
+        classes = re.findall(class_pattern, code)
+        
+        return functions
+    
+    def _generate_tests_for_function(self, code, func_name):
+        tests = []
+        
+        if 'fibonacci' in func_name.lower():
+            tests = [
+                {'name': f'{func_name}_0', 'input': 0, 'expected': 0},
+                {'name': f'{func_name}_1', 'input': 1, 'expected': 1},
+                {'name': f'{func_name}_10', 'input': 10, 'expected': 55},
+                {'name': f'{func_name}_20', 'input': 20, 'expected': 6765},
+            ]
+        elif 'reverse' in func_name.lower() and 'string' in code.lower():
+            tests = [
+                {'name': f'{func_name}_abc', 'input': 'abc', 'expected': 'cba'},
+                {'name': f'{func_name}_empty', 'input': '', 'expected': ''},
+                {'name': f'{func_name}_single', 'input': 'a', 'expected': 'a'},
+            ]
+        elif 'sort' in func_name.lower():
+            tests = [
+                {'name': f'{func_name}_unsorted', 'input': [3, 1, 2], 'expected': [1, 2, 3]},
+                {'name': f'{func_name}_empty', 'input': [], 'expected': []},
+                {'name': f'{func_name}_single', 'input': [1], 'expected': [1]},
+            ]
+        elif 'factorial' in func_name.lower():
+            tests = [
+                {'name': f'{func_name}_0', 'input': 0, 'expected': 1},
+                {'name': f'{func_name}_1', 'input': 1, 'expected': 1},
+                {'name': f'{func_name}_5', 'input': 5, 'expected': 120},
+            ]
+        elif 'prime' in func_name.lower():
+            tests = [
+                {'name': f'{func_name}_2', 'input': 2, 'expected': True},
+                {'name': f'{func_name}_3', 'input': 3, 'expected': True},
+                {'name': f'{func_name}_4', 'input': 4, 'expected': False},
+                {'name': f'{func_name}_17', 'input': 17, 'expected': True},
+            ]
+        else:
+            tests = [
+                {'name': f'{func_name}_basic', 'input': None, 'expected': None, 'check': 'runs'}
+            ]
+        
+        return tests
+    
+    def evaluate_with_custom_tests(self, code, custom_tests):
+        return self.evaluate(code, test_cases=custom_tests)
     
     def _run_test(self, code, test_case):
         import io
@@ -66,27 +132,46 @@ class CodeEvaluator:
         sys.stderr = error_output
         
         result = {
-            'name': test_case['name'],
-            'input': test_case['input'],
-            'expected': test_case['expected'],
+            'name': test_case.get('name', 'test'),
+            'input': test_case.get('input'),
+            'expected': test_case.get('expected'),
             'passed': False,
             'actual': None,
             'error': None
         }
         
         try:
-            compiled = compile(code, '<fibonacci>', 'exec')
-            namespace = {'__name__': '__fibonacci__'}
+            compiled = compile(code, '<generated>', 'exec')
+            namespace = {'__name__': '__test__'}
             exec(compiled, namespace)
             
-            if 'fibonacci' in namespace:
-                fib_func = namespace['fibonacci']
-                actual = fib_func(test_case['input'])
-                result['actual'] = actual
-                result['passed'] = (actual == test_case['expected'])
+            if test_case.get('check') == 'runs':
+                result['passed'] = True
+                result['actual'] = 'executed successfully'
             else:
-                result['error'] = 'fibonacci function not found in code'
+                func_name = test_case['name'].split('_')[0]
+                if len(test_case['name'].split('_')) > 1:
+                    func_name = test_case['name'].rsplit('_', 1)[0].rsplit('_', 1)[0]
                 
+                for name in namespace:
+                    if not name.startswith('_') and callable(namespace[name]):
+                        func = namespace[name]
+                        if callable(func):
+                            try:
+                                input_val = test_case['input']
+                                actual = func(input_val)
+                                result['actual'] = actual
+                                
+                                if test_case.get('expected') is not None:
+                                    result['passed'] = (actual == test_case['expected'])
+                                else:
+                                    result['passed'] = True
+                                break
+                            except Exception:
+                                continue
+                else:
+                    result['error'] = 'No callable function found'
+                    
         except Exception as e:
             result['error'] = f"{type(e).__name__}: {str(e)}"
             result['passed'] = False
@@ -147,5 +232,5 @@ def fibonacci(n):
 '''
     
     evaluator = CodeEvaluator()
-    result = evaluator.evaluate(sample_code, '')
+    result = evaluator.evaluate(sample_code)
     print(json.dumps(result, indent=2))

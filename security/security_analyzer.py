@@ -1,10 +1,37 @@
+"""
+Security Analyzer for Gvisor Code Execution Platform
+
+This module provides the SecurityAnalyzer class for detecting
+potentially dangerous code patterns before execution.
+
+Security Checks:
+- Execution: subprocess, os.system, eval, exec, compile
+- Network: socket, urllib, requests, http
+- Filesystem: os.chmod, os.remove, open(w/a), shutil
+- Code Loading: __import__, pickle, yaml.load, marshal
+- Runtime: globals, locals, vars, dynamic modules
+
+Usage:
+    from security.security_analyzer import SecurityAnalyzer
+    
+    analyzer = SecurityAnalyzer()
+    is_safe, report = analyzer.analyze(code)
+    
+    if not is_safe:
+        print(f"Security issues: {report['issues']}")
+"""
+
 import os
 import re
+import json
 import logging
+from typing import Dict, Any, List, Tuple
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
-
 
 DANGEROUS_PATTERNS = [
     (r'subprocess\.(run|Popen|call|check_output)', 'subprocess execution'),
@@ -37,7 +64,6 @@ DANGEROUS_PATTERNS = [
     (r'vars\s*\(', 'vars'),
 ]
 
-
 ALLOWED_IMPORTS = {
     'math', 'random', 'datetime', 'time', 'json', 're', 'functools',
     'itertools', 'collections', 'operator', 'typing', 'sys', 'os.path',
@@ -46,14 +72,46 @@ ALLOWED_IMPORTS = {
 
 
 class SecurityAnalyzer:
-    def __init__(self):
-        self.dangerous_patterns = DANGEROUS_PATTERNS
-        self.allowed_imports = ALLOWED_IMPORTS
+    """
+    Analyzes Python code for dangerous patterns before execution.
     
-    def analyze(self, code):
+    Scans for:
+    - Code execution (subprocess, eval, exec)
+    - Network access (socket, urllib, requests)
+    - File operations (open for write, os.remove)
+    - Dynamic code loading (pickle, marshal, yaml.load)
+    
+    Attributes:
+        dangerous_patterns: List of (regex, description) tuples
+        allowed_imports: Set of permitted import modules
+    """
+    
+    def __init__(
+        self,
+        dangerous_patterns: List[Tuple[str, str]] = None,
+        allowed_imports: set = None
+    ):
+        self.dangerous_patterns = dangerous_patterns or DANGEROUS_PATTERNS
+        self.allowed_imports = allowed_imports or ALLOWED_IMPORTS
+    
+    def analyze(self, code: str) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Analyze code for security vulnerabilities.
+        
+        Args:
+            code: Python code to analyze
+            
+        Returns:
+            Tuple of (is_safe: bool, report: dict)
+            
+        Report dict contains:
+            - is_safe: bool
+            - issues: List[dict] of detected issues
+            - lines_of_code: int
+        """
         logger.info("Analyzing code for security vulnerabilities")
         
-        issues = []
+        issues: List[Dict[str, Any]] = []
         
         for pattern, description in self.dangerous_patterns:
             matches = re.findall(pattern, code, re.IGNORECASE)
@@ -61,7 +119,7 @@ class SecurityAnalyzer:
                 issues.append({
                     'pattern': pattern,
                     'description': description,
-                    'matches': matches
+                    'matches': matches[:3]
                 })
         
         import_issues = self._check_imports(code)
@@ -69,7 +127,7 @@ class SecurityAnalyzer:
         
         is_safe = len(issues) == 0
         
-        report = {
+        report: Dict[str, Any] = {
             'is_safe': is_safe,
             'issues': issues,
             'lines_of_code': len(code.split('\n'))
@@ -80,8 +138,9 @@ class SecurityAnalyzer:
         logger.info(f"Security analysis complete. Safe: {is_safe}")
         return is_safe, report
     
-    def _check_imports(self, code):
-        issues = []
+    def _check_imports(self, code: str) -> List[Dict[str, Any]]:
+        """Check for disallowed imports."""
+        issues: List[Dict[str, Any]] = []
         
         import_pattern = r'^(?:from\s+(\S+)\s+import|import\s+(\S+))'
         
@@ -105,11 +164,11 @@ class SecurityAnalyzer:
         
         return issues
     
-    def _save_report(self, report):
+    def _save_report(self, report: Dict[str, Any]) -> None:
+        """Save security report to file."""
         output_dir = os.environ.get('CODE_OUTPUT_DIR', '/tmp/generated')
         os.makedirs(output_dir, exist_ok=True)
         
-        import json
         report_file = os.path.join(output_dir, 'security_report.json')
         with open(report_file, 'w') as f:
             json.dump(report, f, indent=2)

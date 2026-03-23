@@ -1,327 +1,384 @@
-# Fibonacci Code Agent with Gvisor Sandbox
+# Gvisor Code Execution Platform
 
-This project implements a secure code generation, execution, and evaluation workflow using Gvisor sandboxing in a Kubernetes Kind cluster. The system uses LangChain to prompt a model to generate Fibonacci code in Python, executes it in a sandbox environment, and evaluates the output before passing verified code to a second agent.
+A secure, Kubernetes-driven code generation, execution, and evaluation platform using Gvisor sandbox isolation.
 
-**Everything runs in Kubernetes** - from code generation to sandbox execution to evaluation.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-Ready-blue)](https://kubernetes.io)
 
-## Architecture Overview
+## Overview
 
-The complete workflow runs as Kubernetes Jobs:
+This platform enables secure execution of arbitrary Python code in isolated Gvisor-sandboxed containers within Kubernetes. Every code execution creates a new, independent sandbox pod - ensuring complete isolation and no cross-contamination.
 
-1. **Code Generation Job** - Agent prompts LLM to generate Fibonacci code
-2. **Security Analysis Job** - Analyzes code for malicious patterns
-3. **Sandbox Execution Job** - Executes code in Gvisor-isolated pod
-4. **Evaluation Job** - Validates output against unit tests
-5. **Second Agent Job** - Executes verified code in production-like environment
+**Key Features:**
+- 🔒 **Secure Execution** - Code runs in Gvisor-isolated containers
+- 🔄 **Independent Sandboxes** - Each execution gets a fresh pod
+- 🤖 **LLM Integration** - Generate code from AI models (OpenAI)
+- 🧪 **Auto-Evaluation** - Automatic test generation and validation
+- 🌐 **REST API + Web UI** - Submit code and view results via browser
 
-### Kubernetes Components
+## Table of Contents
 
-- **RuntimeClass**: Defines the Gvisor runtime using the `runsc` handler
-- **Jobs**: Each agent component runs as a Kubernetes Job
-- **PersistentVolumeClaim**: Shared storage for code/artifacts between jobs
-- **ConfigMap**: Configuration for the agent
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [API Reference](#api-reference)
+- [Security](#security)
+- [Troubleshooting](#troubleshooting)
 
-## Project Structure
+---
+
+## Quick Start
+
+```bash
+# 1. Create Kind cluster with Gvisor
+kind create cluster --config kindCluster/kind-config.yaml
+
+# 2. Build and load image
+docker build -t fibonacci-agent:latest .
+kind load docker-image fibonacci-agent:latest --name gvisor-cluster
+
+# 3. Deploy
+kubectl apply -f kubernetes/agent-deployment.yaml
+kubectl apply -f kubernetes/rbac.yaml
+kubectl apply -f kubernetes/api-deployment.yaml
+
+# 4. Access Web UI
+kubectl get svc -n fibonacci-agent code-executor-api
+# Open: http://<EXTERNAL-IP>:5000
+```
+
+That's it! The platform is ready to execute code.
+
+---
+
+## Architecture
 
 ```
-gvisor/
-├── kindCluster/
-│   ├── Dockerfile              # Custom Kind node with Gvisor
-│   ├── kind-config.yaml        # Kind cluster configuration
-│   └── runtimeclass.yaml       # Gvisor RuntimeClass
-├── agent/
-│   ├── main.py                 # Main agent orchestration
-│   ├── langchain_agent.py      # LangChain-based code generator
-│   └── second_agent.py         # Second agent for verified code
-├── sandbox/
-│   └── gvisor_executor.py      # Gvisor sandbox executor
-├── evaluation/
-│   └── evaluator.py            # Code evaluation module
-├── security/
-│   └── security_analyzer.py    # Security analysis
-├── kubernetes/
-│   ├── agent-deployment.yaml   # Namespace, ConfigMap, PVC
-│   ├── agent-jobs.yaml         # Kubernetes Jobs for each step
-│   ├── agent-workflow.yaml     # Argo Workflow for orchestration
-│   └── rbac.yaml               # ServiceAccount and RBAC
-├── testpod/
-│   └── busyboxpod.yaml         # Test pod for Gvisor
-├── Dockerfile                  # Agent container image
-└── requirements.txt            # Python dependencies
+┌─────────────────────────────────────────────────────────────────┐
+│                        User Input                              │
+│            (Task / Prompt / Direct Code)                       │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  API Server (Deployment)                                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │   REST API  │  │   Web UI    │  │  In-Memory  │              │
+│  │   Endpoint  │  │   (HTML)    │  │   Store     │              │
+│  └─────────────┘  └─────────────┘  └─────────────┘              │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  Step 1: Security Analysis                                     │
+│  - Scans: subprocess, eval, exec, network, file ops            │
+│  - Result: Safe ✅ or Unsafe ❌                                 │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  Step 2: Gvisor Sandbox (NEW POD)                              │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ Pod: sandbox-executor-xxxxx                             │    │
+│  │ spec.runtimeClassName: gvisor                          │    │
+│  │ securityContext:                                       │    │
+│  │   - readOnlyRootFilesystem: true                      │    │
+│  │   - allowPrivilegeEscalation: false                   │    │
+│  │   - capabilities.drop: ALL                            │    │
+│  │ resources: memory=128Mi, cpu=500m                     │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│  Pod terminates after execution                                │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  Step 3: Auto Evaluation                                        │
+│  - Detects function type (fibonacci, sort, reverse, etc.)      │
+│  - Generates appropriate test cases                            │
+│  - Runs tests and reports pass/fail                            │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+                        Final Result
 ```
+
+### Components
+
+| Component | Type | Description |
+|-----------|------|-------------|
+| `run_dynamic.py` | CLI | Command-line execution |
+| `api_server.py` | Web | REST API + Web UI |
+| `gvisor_executor.py` | Library | Sandbox execution |
+| `langchain_agent.py` | Library | LLM code generation |
+| `evaluator.py` | Library | Auto-test generation |
+| `security_analyzer.py` | Library | Security validation |
+
+---
 
 ## Prerequisites
 
-- Docker
-- Kind cluster with Gvisor integration
+- Docker 20.10+
+- Kubernetes cluster with Gvisor runtime
 - kubectl configured
+- (Optional) OpenAI API key for LLM code generation
 
-## Setup Instructions
-
-### 1. Kind Cluster with Gvisor
-
-The cluster should already be created with Gvisor integration:
+### Verify Gvisor Setup
 
 ```bash
-# Verify cluster exists
-kind get clusters
-
-# Verify nodes
-kubectl get nodes -o wide
-
-# Verify RuntimeClass
+# Check RuntimeClass
 kubectl get runtimeclass
+
+# Should show:
+# NAME   HANDLER    AGE
+# gvisor runsc      XXm
 ```
 
-### 2. Build Agent Container Image
+---
+
+## Installation
+
+### 1. Create Kind Cluster with Gvisor
 
 ```bash
-# Build the agent image
-docker build -t fibonacci-agent:latest .
+kind create cluster --config kindCluster/kind-config.yaml
+```
 
-# Load into Kind cluster (required for pods to use the image)
+### 2. Build Container Image
+
+```bash
+docker build -t fibonacci-agent:latest .
+```
+
+### 3. Load Image into Cluster
+
+```bash
 kind load docker-image fibonacci-agent:latest --name gvisor-cluster
 ```
 
-### 3. Deploy to Kubernetes
+### 4. Deploy Resources
 
 ```bash
-# Apply namespace, config, PVC, and RBAC
+# Core infrastructure
 kubectl apply -f kubernetes/agent-deployment.yaml
 kubectl apply -f kubernetes/rbac.yaml
 
-# Apply the jobs
-kubectl apply -f kubernetes/agent-jobs.yaml
+# API Server + Web UI
+kubectl apply -f kubernetes/api-deployment.yaml
 ```
 
-### 4. Monitor Execution
+### 5. Verify Deployment
 
 ```bash
-# Watch job status
-kubectl get jobs -n fibonacci-agent
-
-# Watch pods
+# Check pods
 kubectl get pods -n fibonacci-agent
 
-# Check logs
-kubectl logs -n fibonacci-agent job/fibonacci-code-generator
-kubectl logs -n fibonacci-agent job/fibonacci-security-analyzer
-kubectl logs -n fibonacci-agent job/fibonacci-sandbox-executor
-kubectl logs -n fibonacci-agent job/fibonacci-code-evaluator
-kubectl logs -n fibonacci-agent job/fibonacci-second-agent
+# Check service
+kubectl get svc -n fibonacci-agent code-executor-api
 ```
 
-## Workflow Steps
+---
 
-### Step 1: fibonacci-code-generator (Job)
-- Uses LangChain to prompt LLM for Fibonacci code
-- Generates unit tests using pytest
-- Saves to `/tmp/generated/fibonacci.py`
-- Note: Falls back to template generation if no LLM API key is configured
+## Usage
 
-### Step 2: fibonacci-security-analyzer (Job)
-- Analyzes code for dangerous patterns
-- Checks for subprocess, eval, exec, network access, file operations
-- Produces security report at `/tmp/generated/security_report.json`
+### Option 1: Web UI (Recommended)
 
-### Step 3: fibonacci-sandbox-executor (Job)
-- Executes generated code with Gvisor runtime
-- Uses resource limits (128Mi memory, 500m CPU)
-- Saves execution result to `/tmp/generated/execution_result.json`
+```bash
+# Get service URL
+kubectl get svc -n fibonacci-agent code-executor-api
 
-### Step 4: fibonacci-code-evaluator (Job)
-- Runs unit tests against generated code
-- Validates Fibonacci correctness
-- Produces evaluation report at `/tmp/generated/evaluation_result.json`
+# Open in browser
+# http://<EXTERNAL-IP>:5000
+```
 
-### Step 5: fibonacci-second-agent (Job)
-- Receives verified code
-- Executes in production-like environment
-- Generates final report
+Features:
+- Submit code via Task (LLM), Prompt, or direct Code
+- View execution history
+- See test results in real-time
+
+### Option 2: REST API
+
+```bash
+# Execute a task
+curl -X POST http://<SERVICE-IP>:5000/api/execute \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "task", "input": "reverse a string"}'
+
+# Check status
+curl http://<SERVICE-IP>:5000/api/status/<job_id>
+
+# List all results
+curl http://<SERVICE-IP>:5000/api/results
+```
+
+### Option 3: Kubernetes Job
+
+```bash
+# Deploy job
+kubectl apply -f kubernetes/dynamic-job.yaml
+
+# Customize task
+kubectl set env job/dynamic-code-executor \
+  TASK="calculate fibonacci" -n fibonacci-agent
+```
+
+---
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `KUBERNETES_MODE` | Run in Kubernetes | `false` |
-| `CODE_OUTPUT_DIR` | Output directory | `/tmp/generated` |
-| `RUNTIME_CLASS` | Gvisor runtime | `gvisor` |
-| `EXECUTION_TIMEOUT` | Timeout in seconds | `30` |
-| `MAX_MEMORY` | Memory limit | `128Mi` |
-| `MAX_CPU` | CPU limit | `500m` |
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `KUBERNETES_MODE` | Force K8s execution | `true` | Yes |
+| `CODE_OUTPUT_DIR` | Output directory | `/tmp/generated` | No |
+| `RUNTIME_CLASS` | Runtime name | `gvisor` | Yes |
+| `EXECUTION_TIMEOUT` | Max runtime (sec) | `30` | No |
+| `MAX_MEMORY` | Memory limit | `128Mi` | No |
+| `MAX_CPU` | CPU limit | `500m` | No |
+| `OPENAI_API_KEY` | LLM API key | - | No |
+| `AGENT_MODEL` | LLM model | `gpt-4` | No |
 
-### Job Configuration
+### Security Configuration
 
-Each job uses:
-- `runtimeClassName: gvisor` - Run with Gvisor isolation
-- `imagePullPolicy: Never` - Use locally loaded image
-- Resource limits for CPU and memory
+Each sandbox pod runs with:
+- `runtimeClassName: gvisor` - Gvisor isolation
+- `readOnlyRootFilesystem: true` - No filesystem writes
+- `allowPrivilegeEscalation: false` - No privilege escalation
+- `capabilities.drop: ALL` - No Linux capabilities
+- `runAsNonRoot: true` - Non-root user (UID 1000)
+- Resource limits: 128Mi memory, 500m CPU
 
-## Verifying Gvisor Configuration
+---
 
-### 1. Check RuntimeClass exists
+## API Reference
 
-```bash
-kubectl get runtimeclass
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Web UI |
+| POST | `/api/execute` | Submit code for execution |
+| GET | `/api/status/<job_id>` | Get execution status |
+| GET | `/api/results` | List all results |
+
+### Execute Request
+
+```json
+{
+  "mode": "task|prompt|code",
+  "input": "string"
+}
 ```
 
-Expected output:
-```
-NAME     HANDLER   AGE
-gvisor   runsc     XXm
-```
+**Mode Options:**
+- `task`: LLM generates code from task description
+- `prompt`: LLM generates code from custom prompt  
+- `code`: Execute provided Python code directly
 
-### 2. Verify runsc is registered in containerd
+### Response
 
-```bash
-docker exec gvisor-cluster-worker crictl info | grep -A2 runsc
-```
-
-Expected output:
-```
-"runsc": {
-  "runtimeType": "io.containerd.runsc.v1",
-```
-
-### 3. Check pods use Gvisor runtime
-
-```bash
-kubectl get pods -n fibonacci-agent -o wide
+```json
+{
+  "job_id": "uuid",
+  "status": "pending|running|completed|failed",
+  "security": { "safe": true, "report": "..." },
+  "execution": { "success": true, "output": "..." },
+  "evaluation": { "passed": true, "passed_tests": 3, "total_tests": 3 }
+}
 ```
 
-Verify the `RUNTIME CLASS` column shows `gvisor`:
-```
-kubectl get pods -n fibonacci-agent -o jsonpath='{.items[*].spec.runtimeClassName}'
-```
+---
 
-### 4. Verify runtimeClassName in pod spec
+## Security
 
-```bash
-kubectl get pod <pod-name> -n fibonacci-agent -o jsonpath='{.spec.runtimeClassName}'
-```
+### Security Analysis
 
-Should output: `gvisor`
+The platform scans for dangerous patterns:
 
-### 5. Check pod events for Gvisor
+| Category | Patterns |
+|----------|----------|
+| Execution | `subprocess`, `os.system`, `eval`, `exec` |
+| Network | `socket`, `urllib`, `requests`, `http` |
+| Filesystem | `os.chmod`, `os.remove`, `open(..., 'w')` |
+| Imports | `__import__`, `pty`, `signal` |
 
-```bash
-kubectl describe pod <pod-name> -n fibonacci-agent | grep -i runtime
-```
+### Defense Layers
 
-Should show: `RuntimeClass: gvisor`
+1. **Gvisor Isolation** - Kernel-level sandbox
+2. **Kubernetes RuntimeClass** - Pod-level isolation
+3. **Security Context** - Container restrictions
+4. **Resource Limits** - DoS prevention
+5. **Security Analyzer** - Pre-execution validation
+
+---
 
 ## Troubleshooting
 
-### ErrImagePull / ImagePullBackOff
-
-If pods fail with `ErrImagePull` or `ImagePullBackOff`, the image isn't available in the cluster's container runtime.
-
-**Symptom:**
-```
-Failed to pull image "fibonacci-agent:latest": pull access denied, repository does not exist or may require authorization
-```
-
-**Cause:** Kubernetes is trying to pull from Docker Hub instead of using the locally built image.
-
-**Solution:**
-
-1. **Load image into Kind cluster nodes:**
-   ```bash
-   kind load docker-image fibonacci-agent:latest --name gvisor-cluster
-   ```
-
-2. **Add `imagePullPolicy: Never` to job specs:**
-   
-   Edit `kubernetes/agent-jobs.yaml` and add `imagePullPolicy: Never` to each container spec:
-   ```yaml
-   containers:
-     - name: generator
-       image: fibonacci-agent:latest
-       imagePullPolicy: Never  # Add this line
-   ```
-
-3. **Reapply jobs:**
-   ```bash
-   kubectl delete jobs -n fibonacci-agent --all
-   kubectl apply -f kubernetes/agent-jobs.yaml
-   ```
-
-**Alternative - Use a local registry:**
-```bash
-# Create a local registry
-docker run -d --name registry -p 5000:5000 registry:2
-
-# Tag and push to local registry
-docker tag fibonacci-agent:latest localhost:5000/fibonacci-agent:latest
-docker push localhost:5000/fibonacci-agent:latest
-
-# Update job images to use localhost:5000/fibonacci-agent:latest
-```
-
-## Known Issues
-
-1. **LLM API Key Required** - The LangChain agent requires an LLM provider (OpenAI, Anthropic, etc.) with API key configured. Without it, falls back to template generation.
-
-2. **Security Analyzer False Positives** - The security analyzer may flag some safe patterns (e.g., pytest imports). Review the security report before using code in production.
-
-3. **RBAC for Nested Pods** - The sandbox executor needs proper RBAC to create pods within Kubernetes. Current setup may require additional ClusterRole bindings for full nested pod execution.
-
-## Security Features
-
-- **Gvisor Isolation**: Sandboxed container execution using runsc
-- **RuntimeClass**: Kubernetes-level runtime isolation
-- **Resource Limits**: CPU and memory restrictions per job
-- **Persistent Volume**: Shared storage for artifacts between jobs
-- **No Auto-Delete**: Jobs remain after completion for inspection
-
-## Example Output
+### Pods Not Starting
 
 ```bash
-$ kubectl get pods -n fibonacci-agent
+# Check RuntimeClass
+kubectl get runtimeclass
 
-NAME                                READY   STATUS      RESTARTS   AGE
-fibonacci-code-generator-w965j      0/1     Completed   0          9s
-fibonacci-security-analyzer-wjkxr  0/1     Completed   0          9s
-fibonacci-sandbox-executor-26kvx   0/1     Completed   0          9s
-fibonacci-code-evaluator-fgdx8     0/1     Completed   0          9s
-fibonacci-second-agent-kvw4z        0/1     Completed   0          9s
-
-$ kubectl logs -n fibonacci-agent job/fibonacci-code-evaluator
-2026-03-23 13:21:15,571 - INFO - Evaluation complete. Passed: 5/5
+# Check containerd
+docker exec <node> crictl info | grep runsc
 ```
 
-## Verification
-
-Check generated artifacts in any completed job pod:
+### Image Pull Errors
 
 ```bash
-# List generated files
-kubectl exec fibonacci-code-evaluator-fgdx8 -n fibonacci-agent -- ls /tmp/generated/
+# Reload image
+kind load docker-image fibonacci-agent:latest --name gvisor-cluster
 
-# View security report
-kubectl exec fibonacci-code-evaluator-fgdx8 -n fibonacci-agent -- cat /tmp/generated/security_report.json
-
-# View evaluation results
-kubectl exec fibonacci-code-evaluator-fgdx8 -n fibonacci-agent -- cat /tmp/generated/evaluation_result.json
+# Verify image
+kubectl get pods -n fibonacci-agent -o wide
 ```
 
-## Cleanup
+### Execution Timeouts
 
 ```bash
-# Delete all jobs
-kubectl delete jobs -n fibonacci-agent --all
-
-# Delete namespace and all resources
-kubectl delete namespace fibonacci-agent
+# Increase timeout
+kubectl set env job/dynamic-code-executor EXECUTION_TIMEOUT=60 -n fibonacci-agent
 ```
 
-## Dependencies
+### View Logs
 
-- Python 3.11+
-- Kubernetes (Kind cluster)
-- Gvisor (runsc)
-- Docker
-- kubectl
-- langchain (for LLM code generation)
+```bash
+# API server
+kubectl logs -n fibonacci-agent -l app=code-executor-api
+
+# Job logs
+kubectl logs -n fibonacci-agent job/dynamic-code-executor
+```
+
+---
+
+## Project Structure
+
+```
+gvisor/
+├── agent/                  # Code generation
+│   ├── langchain_agent.py
+│   └── second_agent.py
+├── sandbox/                # Execution
+│   └── gvisor_executor.py
+├── evaluation/            # Testing
+│   └── evaluator.py
+├── security/              # Analysis
+│   └── security_analyzer.py
+├── kubernetes/            # K8s manifests
+│   ├── agent-deployment.yaml
+│   ├── api-deployment.yaml
+│   ├── dynamic-job.yaml
+│   └── rbac.yaml
+├── kindCluster/           # Cluster setup
+│   ├── kind-config.yaml
+│   └── runtimeclass.yaml
+├── run_dynamic.py        # CLI entry point
+├── api_server.py         # Web API
+└── Dockerfile            # Container image
+```
+
+---
+
+## License
+
+MIT License - See [LICENSE](LICENSE) for details.
