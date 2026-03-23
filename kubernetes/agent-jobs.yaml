@@ -4,7 +4,6 @@ metadata:
   name: fibonacci-code-generator
   namespace: fibonacci-agent
 spec:
-  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
@@ -44,7 +43,6 @@ metadata:
   name: fibonacci-security-analyzer
   namespace: fibonacci-agent
 spec:
-  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
@@ -84,7 +82,6 @@ metadata:
   name: fibonacci-sandbox-executor
   namespace: fibonacci-agent
 spec:
-  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
@@ -132,7 +129,6 @@ metadata:
   name: fibonacci-code-evaluator
   namespace: fibonacci-agent
 spec:
-  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
@@ -174,7 +170,6 @@ metadata:
   name: fibonacci-second-agent
   namespace: fibonacci-agent
 spec:
-  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
