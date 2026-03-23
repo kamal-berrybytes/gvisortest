@@ -16,6 +16,7 @@ spec:
       containers:
         - name: generator
           image: fibonacci-agent:latest
+          imagePullPolicy: Never
           command: ["python", "/app/agent/langchain_agent.py"]
           env:
             - name: KUBERNETES_MODE
@@ -55,6 +56,7 @@ spec:
       containers:
         - name: analyzer
           image: fibonacci-agent:latest
+          imagePullPolicy: Never
           command: ["python", "/app/security/security_analyzer.py"]
           env:
             - name: KUBERNETES_MODE
@@ -94,6 +96,7 @@ spec:
       containers:
         - name: executor
           image: fibonacci-agent:latest
+          imagePullPolicy: Never
           command: ["python", "/app/sandbox/gvisor_executor.py"]
           env:
             - name: KUBERNETES_MODE
@@ -141,6 +144,7 @@ spec:
       containers:
         - name: evaluator
           image: fibonacci-agent:latest
+          imagePullPolicy: Never
           command: ["python", "/app/evaluation/evaluator.py"]
           env:
             - name: KUBERNETES_MODE
@@ -182,6 +186,7 @@ spec:
       containers:
         - name: second-agent
           image: fibonacci-agent:latest
+          imagePullPolicy: Never
           command: ["python", "/app/agent/second_agent.py"]
           env:
             - name: KUBERNETES_MODE
