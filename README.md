@@ -159,6 +159,59 @@ Each job uses:
 - `imagePullPolicy: Never` - Use locally loaded image
 - Resource limits for CPU and memory
 
+## Verifying Gvisor Configuration
+
+### 1. Check RuntimeClass exists
+
+```bash
+kubectl get runtimeclass
+```
+
+Expected output:
+```
+NAME     HANDLER   AGE
+gvisor   runsc     XXm
+```
+
+### 2. Verify runsc is registered in containerd
+
+```bash
+docker exec gvisor-cluster-worker crictl info | grep -A2 runsc
+```
+
+Expected output:
+```
+"runsc": {
+  "runtimeType": "io.containerd.runsc.v1",
+```
+
+### 3. Check pods use Gvisor runtime
+
+```bash
+kubectl get pods -n fibonacci-agent -o wide
+```
+
+Verify the `RUNTIME CLASS` column shows `gvisor`:
+```
+kubectl get pods -n fibonacci-agent -o jsonpath='{.items[*].spec.runtimeClassName}'
+```
+
+### 4. Verify runtimeClassName in pod spec
+
+```bash
+kubectl get pod <pod-name> -n fibonacci-agent -o jsonpath='{.spec.runtimeClassName}'
+```
+
+Should output: `gvisor`
+
+### 5. Check pod events for Gvisor
+
+```bash
+kubectl describe pod <pod-name> -n fibonacci-agent | grep -i runtime
+```
+
+Should show: `RuntimeClass: gvisor`
+
 ## Troubleshooting
 
 ### ErrImagePull / ImagePullBackOff
