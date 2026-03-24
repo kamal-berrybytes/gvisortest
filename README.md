@@ -40,6 +40,9 @@ kind create cluster --config kindCluster/kind-config.yaml
 docker build -t fibonacci-agent:latest .
 kind load docker-image fibonacci-agent:latest --name gvisor-cluster
 
+# check if the images has been loaded to the cluster
+docker exec -it gvisor-cluster-control-plane crictl images | grep fibonacci
+
 # 3. Deploy
 kubectl apply -f kubernetes/agent-deployment.yaml
 kubectl apply -f kubernetes/rbac.yaml
@@ -145,6 +148,9 @@ kind create cluster --config kindCluster/kind-config.yaml
 
 ```bash
 docker build -t fibonacci-agent:latest .
+
+# Load into kind cluster
+kind load docker-image fibonacci-agent:latest --name gvisor-cluster
 ```
 
 ### 3. Load Image into Cluster
@@ -181,11 +187,18 @@ kubectl get svc -n fibonacci-agent code-executor-api
 ### Option 1: Web UI (Recommended)
 
 ```bash
-# Get service URL
+# Get service URL and NodePort
 kubectl get svc -n fibonacci-agent code-executor-api
 
+# Access via NodePort (recommended for kind/local clusters)
+# The port will be shown as <nodePort>:5000 (e.g., 32601:5000)
+
+# Get node IP
+kubectl get nodes -o wide
+
 # Open in browser
-# http://<EXTERNAL-IP>:5000
+# http://<NODE-IP>:<NODEPORT>
+# Example: http://172.18.0.3:32601
 ```
 
 Features:
@@ -325,8 +338,12 @@ docker exec <node> crictl info | grep runsc
 ### Image Pull Errors
 
 ```bash
-# Reload image
+# Rebuild and reload image
+docker build -t fibonacci-agent:latest .
 kind load docker-image fibonacci-agent:latest --name gvisor-cluster
+
+# Restart deployment to pick up new image
+kubectl rollout restart deployment/code-executor-api -n fibonacci-agent
 
 # Verify image
 kubectl get pods -n fibonacci-agent -o wide
@@ -348,6 +365,23 @@ kubectl logs -n fibonacci-agent -l app=code-executor-api
 # Job logs
 kubectl logs -n fibonacci-agent job/dynamic-code-executor
 ```
+
+### Port-Forward Not Working
+
+If `kubectl port-forward` fails with "connection refused", this is a known issue with gvisor runtime in kind clusters. Use NodePort instead:
+
+```bash
+# Service is configured as NodePort
+kubectl get svc -n fibonacci-agent code-executor-api
+
+# Get node IP
+kubectl get nodes -o wide
+
+# Access via http://<NODE-IP>:<NODEPORT>
+# Example: curl http://172.18.0.3:32601
+```
+
+Note: The service uses NodePort instead of LoadBalancer for kind/local clusters. The port mapping will show as `5000:<NODEPORT>/TCP` (e.g., `5000:32601/TCP`).
 
 ---
 

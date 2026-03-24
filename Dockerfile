@@ -3,13 +3,15 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install dependencies
-RUN pip install --no-cache-dir pyyaml pytest
+RUN pip install --no-cache-dir pyyaml pytest flask kubernetes
 
 # Copy all source code
 COPY agent /app/agent
 COPY sandbox /app/sandbox
 COPY evaluation /app/evaluation
 COPY security /app/security
+COPY api_server.py /app/
+COPY run_dynamic.py /app/
 
 # Install kubectl for Kubernetes operations
 RUN apt-get update && apt-get install -y curl && \
