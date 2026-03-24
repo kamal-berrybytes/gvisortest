@@ -150,7 +150,7 @@ kubectl describe pod <sandbox-pod-name> -n fibonacci-agent | grep -E "Runtime Cl
 # Verify security context
 kubectl get pod <sandbox-pod-name> -n fibonacci-agent -o jsonpath='{.spec.runtimeClassName}'
 
-# Should output: gvisor
+# Should output: gvisor  
 ```
 
 ### Common Issues
