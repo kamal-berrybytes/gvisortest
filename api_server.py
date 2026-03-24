@@ -29,18 +29,17 @@ from typing import Dict, Any, Optional, List
 from flask import Flask, request, jsonify, render_template_string
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-os.environ['KUBERNETES_MODE'] = 'true'
+os.environ["KUBERNETES_MODE"] = "true"
 
 app = Flask(__name__)
 
 RESULTS_STORE: Dict[str, Dict[str, Any]] = {}
 
-HTML_TEMPLATE = '''<!DOCTYPE html>
+HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
     <title>Gvisor Code Execution</title>
@@ -231,133 +230,130 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         setInterval(loadHistory, 5000);
     </script>
 </body>
-</html>'''
+</html>"""
 
 
-@app.route('/')
+@app.route("/")
 def index() -> str:
     """Render the Web UI."""
     return render_template_string(HTML_TEMPLATE)
 
 
-@app.route('/api/execute', methods=['POST'])
+@app.route("/api/execute", methods=["POST"])
 def execute() -> Dict[str, Any]:
     """
     Execute code through the full pipeline: security analysis,
     sandbox execution, and evaluation.
-    
+
     Request JSON:
         {
             "mode": "task|prompt|code",
             "input": "string"
         }
-    
+
     Returns:
         {"job_id": "uuid", "status": "..."}
     """
     data = request.json or {}
-    mode = data.get('mode', 'code')
-    user_input = data.get('input', '')
-    
+    mode = data.get("mode", "code")
+    user_input = data.get("input", "")
+
     job_id = str(uuid.uuid4())
-    
+
     RESULTS_STORE[job_id] = {
-        'job_id': job_id,
-        'mode': mode,
-        'input': user_input,
-        'timestamp': datetime.now().isoformat(),
-        'status': 'pending',
-        'security': None,
-        'execution': None,
-        'evaluation': None
+        "job_id": job_id,
+        "mode": mode,
+        "input": user_input,
+        "timestamp": datetime.now().isoformat(),
+        "status": "pending",
+        "security": None,
+        "execution": None,
+        "evaluation": None,
     }
-    
+
     try:
         code: Optional[str] = None
-        
-        if mode == 'code':
+
+        if mode == "code":
             code = user_input
-        elif mode == 'task':
+        elif mode == "task":
             from agent.langchain_agent import CodeGenerationAgent
+
             agent = CodeGenerationAgent()
             code = agent.generate_code_from_task(user_input)
-        elif mode == 'prompt':
+        elif mode == "prompt":
             from agent.langchain_agent import CodeGenerationAgent
+
             agent = CodeGenerationAgent()
             code = agent.generate_code(user_input)
-        
+
         if code is None:
             raise ValueError("No code generated")
-        
-        RESULTS_STORE[job_id]['status'] = 'running'
-        RESULTS_STORE[job_id]['generated_code'] = code
-        
+
+        RESULTS_STORE[job_id]["status"] = "running"
+        RESULTS_STORE[job_id]["generated_code"] = code
+
         logger.info(f"Job {job_id}: Running security analysis")
         from security.security_analyzer import SecurityAnalyzer
+
         analyzer = SecurityAnalyzer()
         is_safe, report = analyzer.analyze(code)
-        
-        RESULTS_STORE[job_id]['security'] = {'safe': is_safe, 'report': report}
-        
+
+        RESULTS_STORE[job_id]["security"] = {"safe": is_safe, "report": report}
+
         if not is_safe:
-            RESULTS_STORE[job_id]['status'] = 'failed'
-            return jsonify({
-                'job_id': job_id,
-                'status': 'failed',
-                'error': 'Security check failed'
-            })
-        
+            RESULTS_STORE[job_id]["status"] = "failed"
+            return jsonify(
+                {"job_id": job_id, "status": "failed", "error": "Security check failed"}
+            )
+
         logger.info(f"Job {job_id}: Executing in Gvisor sandbox")
         from sandbox.gvisor_executor import GvisorSandboxExecutor
+
         executor = GvisorSandboxExecutor()
         exec_result = executor.execute(code)
-        
-        RESULTS_STORE[job_id]['execution'] = exec_result
-        
-        if not exec_result['success']:
-            RESULTS_STORE[job_id]['status'] = 'failed'
-            return jsonify({
-                'job_id': job_id,
-                'status': 'failed',
-                'error': 'Execution failed'
-            })
-        
+
+        RESULTS_STORE[job_id]["execution"] = exec_result
+
+        if not exec_result["success"]:
+            RESULTS_STORE[job_id]["status"] = "failed"
+            return jsonify(
+                {"job_id": job_id, "status": "failed", "error": "Execution failed"}
+            )
+
         logger.info(f"Job {job_id}: Evaluating code")
         from evaluation.evaluator import CodeEvaluator
+
         evaluator = CodeEvaluator()
-        eval_result = evaluator.evaluate(code, exec_result.get('output'))
-        
-        RESULTS_STORE[job_id]['evaluation'] = eval_result
-        RESULTS_STORE[job_id]['status'] = 'completed'
-        
-        return jsonify({'job_id': job_id, 'status': 'completed'})
-        
+        eval_result = evaluator.evaluate(code, exec_result.get("output"))
+
+        RESULTS_STORE[job_id]["evaluation"] = eval_result
+        RESULTS_STORE[job_id]["status"] = "completed"
+
+        return jsonify({"job_id": job_id, "status": "completed"})
+
     except Exception as e:
         logger.error(f"Job {job_id} failed: {e}")
-        RESULTS_STORE[job_id]['status'] = 'failed'
-        RESULTS_STORE[job_id]['error'] = str(e)
-        return jsonify({
-            'job_id': job_id,
-            'status': 'failed',
-            'error': str(e)
-        })
+        RESULTS_STORE[job_id]["status"] = "failed"
+        RESULTS_STORE[job_id]["error"] = str(e)
+        return jsonify({"job_id": job_id, "status": "failed", "error": str(e)})
 
 
-@app.route('/api/status/<job_id>', methods=['GET'])
+@app.route("/api/status/<job_id>", methods=["GET"])
 def get_status(job_id: str) -> Dict[str, Any]:
     """Get the status of a specific execution."""
     result = RESULTS_STORE.get(job_id)
     if not result:
-        return jsonify({'error': 'Job not found'}), 404
+        return jsonify({"error": "Job not found"}), 404
     return jsonify(result)
 
 
-@app.route('/api/results', methods=['GET'])
+@app.route("/api/results", methods=["GET"])
 def list_results() -> Dict[str, List[Dict[str, Any]]]:
     """List all execution results."""
-    return jsonify({'results': list(RESULTS_STORE.values())})
+    return jsonify({"results": list(RESULTS_STORE.values())})
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)

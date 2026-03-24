@@ -38,7 +38,7 @@ spec:
         component: api
     spec:
       # Use Gvisor runtime for isolation
-      runtimeClassName: gvisor
+      serviceAccountName: fibonacci-agent-sa
       containers:
         - name: api
           image: fibonacci-agent:latest
