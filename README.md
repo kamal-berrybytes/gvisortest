@@ -134,6 +134,50 @@ kubectl get runtimeclass
 # gvisor runsc      XXm
 ```
 
+### Verify Sandbox Pod Configuration
+
+To verify that sandbox pods are properly configured with gVisor:
+
+```bash
+# Check sandbox pod spec for runtimeClassName
+kubectl get pod -n fibonacci-agent -l app=gvisor-sandbox -o yaml | grep -E "runtimeClassName|gvisor"
+
+# Should show: runtimeClassName: gvisor
+
+# Check pod details
+kubectl describe pod <sandbox-pod-name> -n fibonacci-agent | grep -E "Runtime Class|gvisor"
+
+# Verify security context
+kubectl get pod <sandbox-pod-name> -n fibonacci-agent -o jsonpath='{.spec.runtimeClassName}'
+
+# Should output: gvisor
+```
+
+### Common Issues
+
+#### Volume Mount Issues (hostPath not available)
+
+If sandbox pods fail with `hostPath type check failed: /tmp/generated is not a directory`:
+
+1. The code uses `persistentVolumeClaim` instead of `hostPath`
+2. Rebuild and reload the Docker image:
+```bash
+docker build -t fibonacci-agent:latest .
+kind load docker-image fibonacci-agent:latest --name gvisor-cluster
+kubectl rollout restart deployment/code-executor-api -n fibonacci-agent
+```
+
+#### Python Cache Issues
+
+If changes to `gvisor_executor.py` are not being picked up:
+
+```bash
+# Rebuild image to include latest code
+docker build -t fibonacci-agent:latest .
+kind load docker-image fibonacci-agent:latest --name gvisor-cluster
+kubectl rollout restart deployment/code-executor-api -n fibonacci-agent
+```
+
 ---
 
 ## Installation
@@ -257,7 +301,18 @@ Each sandbox pod runs with:
 - `allowPrivilegeEscalation: false` - No privilege escalation
 - `capabilities.drop: ALL` - No Linux capabilities
 - `runAsNonRoot: true` - Non-root user (UID 1000)
+- `persistentVolumeClaim` - Shares storage with API pod via PVC
 - Resource limits: 128Mi memory, 500m CPU
+
+### Volume Configuration
+
+The sandbox pods use a PersistentVolumeClaim (`generated-code-pvc`) to share storage with the API deployment. This ensures:
+
+1. The API pod can write code to a shared volume
+2. The sandbox pod can read and execute the code
+3. No hostPath volumes are needed (which would fail on worker nodes)
+
+**Important:** Never use `hostPath` volumes for sandbox pods in a multi-node cluster as they are not available on worker nodes.
 
 ---
 
@@ -325,6 +380,22 @@ The platform scans for dangerous patterns:
 
 ## Troubleshooting
 
+### Verify Gvisor is Working
+
+```bash
+# 1. Check RuntimeClass exists
+kubectl get runtimeclass gvisor
+
+# 2. Check sandbox pod has runtimeClassName set
+kubectl get pod -l app=gvisor-sandbox -n fibonacci-agent -o jsonpath='{.items[*].spec.runtimeClassName}'
+
+# 3. Check pod events for gvisor-related errors
+kubectl describe pod -l app=gvisor-sandbox -n fibonacci-agent | grep -i gvisor
+
+# 4. Verify PVC is mounted (not hostPath)
+kubectl get pod -l app=gvisor-sandbox -n fibonacci-agent -o jsonpath='{.items[*].spec.volumes[*].persistentVolumeClaim.claimName}'
+```
+
 ### Pods Not Starting
 
 ```bash
@@ -347,6 +418,9 @@ kubectl rollout restart deployment/code-executor-api -n fibonacci-agent
 
 # Verify image
 kubectl get pods -n fibonacci-agent -o wide
+
+# Verify sandbox pod uses PVC (not hostPath)
+kubectl get pod -l app=gvisor-sandbox -n fibonacci-agent -o jsonpath='{.items[0].spec.volumes[0].name}: {.items[0].spec.volumes[0].persistentVolumeClaim.claimName}'
 ```
 
 ### Execution Timeouts
