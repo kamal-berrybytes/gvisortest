@@ -24,7 +24,7 @@ import os
 import uuid
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 
 from flask import Flask, request, jsonify, render_template_string
 
@@ -77,6 +77,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .status-completed { background: #27ae60; color: white; }
         .status-failed { background: #e74c3c; color: white; }
         .loading { text-align: center; padding: 20px; color: #7f8c8d; }
+        .test-results { margin-top: 10px; }
+        .test-item { padding: 8px 12px; margin: 5px 0; border-radius: 4px; font-size: 13px; }
+        .test-passed { background: #d4edda; border-left: 3px solid #28a745; }
+        .test-failed { background: #f8d7da; border-left: 3px solid #dc3545; }
+        .test-status { font-weight: bold; margin-right: 5px; }
     </style>
 </head>
 <body>
@@ -216,7 +221,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         }
                         if (data.evaluation) {
                             html += '<p><strong>Tests:</strong> ' + data.evaluation.passed_tests + '/' + data.evaluation.total_tests + ' passed</p>';
-                            html += '<pre>' + JSON.stringify(data.evaluation.test_results, null, 2) + '</pre>';
+                            html += '<div class="test-results">';
+                            if (data.evaluation.test_results) {
+                                data.evaluation.test_results.forEach(test => {
+                                    const statusIcon = test.passed ? '✓' : '✗';
+                                    const statusClass = test.passed ? 'test-passed' : 'test-failed';
+                                    html += '<div class="test-item ' + statusClass + '">';
+                                    html += '<span class="test-status">' + statusIcon + '</span> ';
+                                    html += '<strong>' + test.name + '</strong>';
+                                    if (test.input !== null && test.input !== undefined) {
+                                        html += ' | Input: ' + JSON.stringify(test.input);
+                                    }
+                                    if (test.expected !== null && test.expected !== undefined) {
+                                        html += ' | Expected: ' + JSON.stringify(test.expected);
+                                    }
+                                    if (test.actual !== null && test.actual !== undefined) {
+                                        html += ' | Actual: ' + JSON.stringify(test.actual);
+                                    }
+                                    if (test.error) {
+                                        html += ' | Error: ' + test.error;
+                                    }
+                                    html += '</div>';
+                                });
+                            }
+                            html += '</div>';
                         }
                         html += '</div>';
                         resultDiv.innerHTML = html;
@@ -234,13 +262,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 @app.route("/")
-def index() -> str:
+def index():
     """Render the Web UI."""
     return render_template_string(HTML_TEMPLATE)
 
 
 @app.route("/api/execute", methods=["POST"])
-def execute() -> Dict[str, Any]:
+def execute():
     """
     Execute code through the full pipeline: security analysis,
     sandbox execution, and evaluation.
@@ -272,20 +300,19 @@ def execute() -> Dict[str, Any]:
     }
 
     try:
-        code: Optional[str] = None
+        from agent.langchain_agent import CodeGenerationAgent
+
+        agent = CodeGenerationAgent()
+        code = None
 
         if mode == "code":
             code = user_input
         elif mode == "task":
-            from agent.langchain_agent import CodeGenerationAgent
-
-            agent = CodeGenerationAgent()
             code = agent.generate_code_from_task(user_input)
         elif mode == "prompt":
-            from agent.langchain_agent import CodeGenerationAgent
-
-            agent = CodeGenerationAgent()
             code = agent.generate_code(user_input)
+        else:
+            raise ValueError(f"Invalid mode: {mode}")
 
         if code is None:
             raise ValueError("No code generated")
@@ -330,7 +357,9 @@ def execute() -> Dict[str, Any]:
         RESULTS_STORE[job_id]["evaluation"] = eval_result
         RESULTS_STORE[job_id]["status"] = "completed"
 
-        return jsonify({"job_id": job_id, "status": "completed"})
+        return jsonify(
+            {"job_id": job_id, "status": "completed", "evaluation": eval_result}
+        )
 
     except Exception as e:
         logger.error(f"Job {job_id} failed: {e}")
@@ -340,7 +369,7 @@ def execute() -> Dict[str, Any]:
 
 
 @app.route("/api/status/<job_id>", methods=["GET"])
-def get_status(job_id: str) -> Dict[str, Any]:
+def get_status(job_id: str):
     """Get the status of a specific execution."""
     result = RESULTS_STORE.get(job_id)
     if not result:
@@ -349,7 +378,7 @@ def get_status(job_id: str) -> Dict[str, Any]:
 
 
 @app.route("/api/results", methods=["GET"])
-def list_results() -> Dict[str, List[Dict[str, Any]]]:
+def list_results():
     """List all execution results."""
     return jsonify({"results": list(RESULTS_STORE.values())})
 
